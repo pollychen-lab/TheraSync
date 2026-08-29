@@ -1,0 +1,53 @@
+services:
+  # 1. PostgreSQL database
+  postgres:
+    image: postgres:16-alpine
+    container_name: therasync-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-therasync}
+      POSTGRES_USER: ${POSTGRES_USER:-therasync_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-therasync_secret_2026}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./init-db:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-therasync_user} -d ${POSTGRES_DB:-therasync}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 2. Node.js / Express backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: therasync-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PORT: 3001
+      DATABASE_URL: postgres://${POSTGRES_USER:-therasync_user}:${POSTGRES_PASSWORD:-therasync_secret_2026}@postgres:5432/${POSTGRES_DB:-therasync}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000,http://localhost:80}
+    ports:
+      - "3001:3001"
+
+  # 3. React frontend SPA, served through Nginx
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: therasync-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "3000:80"
+
+volumes:
+  pgdata:
+    driver: local
