@@ -54,9 +54,10 @@ const theme = {
 
 function initials(name: string): string {
   return name
-    .replace(/[,.].*$/, "")
     .trim()
     .split(/\s+/)
+    .map((part) => part.replace(/[,.]/g, ""))
+    .filter((part) => !["dr"].includes(part.toLowerCase()))
     .map((part) => part[0])
     .join("")
     .slice(0, 2)
@@ -305,57 +306,28 @@ export default function TheraSyncApp() {
 
   return (
     <div
+      className="thera-app-shell"
       style={{
-        maxWidth: 1080,
-        margin: "0 auto",
-        padding: "40px 24px 64px",
         color: theme.textPrimary,
         fontFamily: theme.fontFamily,
       }}
     >
-      <header style={{ paddingBottom: 24, marginBottom: 32, borderBottom: `1px solid ${theme.border}` }}>
-        <h1
-          style={{
-            fontSize: 28,
-            fontWeight: 600,
-            letterSpacing: "-0.02em",
-            margin: 0,
-            color: theme.textPrimary,
-            display: "flex",
-            alignItems: "center",
-            flexWrap: "wrap",
-            gap: 10,
-          }}
-        >
+      <header className="thera-hero">
+        <h1 className="thera-hero-title">
           TheraSync Co-Pilot
-          <span
-            style={{
-              fontSize: 12,
-              fontWeight: 600,
-              backgroundColor: theme.accentSoft,
-              color: theme.accentText,
-              padding: "4px 10px",
-              borderRadius: theme.radiusPill,
-            }}
-          >
-            WebMCP Connected
-          </span>
+          <span className="thera-status-pill">WebMCP Connected</span>
         </h1>
-        <p style={{ margin: "8px 0 0", color: theme.textSecondary, fontSize: 15 }}>
+        <p className="thera-hero-subtitle">
           A clinical-triage-aware intake scheduling hub built on the WebMCP contract
         </p>
       </header>
 
       {bookedSuccess && (
         <div
+          className="thera-banner"
           style={{
             backgroundColor: theme.successSoft,
             color: theme.success,
-            padding: "16px 20px",
-            borderRadius: theme.radiusMd,
-            marginBottom: 24,
-            fontSize: 14,
-            lineHeight: 1.5,
           }}
         >
           <strong>Booking confirmed.</strong> {bookedSuccess}
@@ -364,14 +336,10 @@ export default function TheraSyncApp() {
 
       {errorMessage && (
         <div
+          className="thera-banner"
           style={{
             backgroundColor: theme.dangerSoft,
             color: "#c0271d",
-            padding: "16px 20px",
-            borderRadius: theme.radiusMd,
-            marginBottom: 24,
-            fontSize: 14,
-            lineHeight: 1.5,
           }}
         >
           <strong>Something went wrong.</strong> {errorMessage}
@@ -380,53 +348,32 @@ export default function TheraSyncApp() {
 
       <div className="thera-content-grid">
         <section>
-          <h2
-            style={{
-              fontSize: 13,
-              fontWeight: 600,
-              textTransform: "uppercase",
-              letterSpacing: "0.04em",
-              color: theme.textSecondary,
-              marginBottom: 14,
-            }}
-          >
+          <h2 className="thera-section-title">
             Matched Therapists ({matchedTherapists.length})
           </h2>
           {matchedTherapists.length === 0 ? (
-            <div
-              style={{
-                padding: 40,
-                borderRadius: theme.radiusLg,
-                border: `1px solid ${theme.border}`,
-                backgroundColor: theme.surfaceMuted,
-                textAlign: "center",
-                color: theme.textSecondary,
-                fontSize: 14,
-              }}
-            >
-              Waiting for the agent to run the triage and matching tool...
+            <div className="thera-empty-panel">
+              <div>
+                <div className="thera-empty-mark">TS</div>
+                Waiting for the agent to run the triage and matching tool...
+              </div>
             </div>
           ) : (
             matchedTherapists.map((t) => {
               const isSelected = selectedTherapist?.id === t.id;
               return (
-                <div
+                <button
+                  className="thera-therapist-card"
                   key={t.id}
+                  type="button"
                   onClick={() => {
                     setSelectedTherapist(t);
                     setActiveSlot(t.slots[0]);
                   }}
                   style={{
-                    display: "flex",
-                    gap: 16,
-                    padding: 18,
-                    borderRadius: theme.radiusLg,
                     border: isSelected ? `1.5px solid ${theme.accent}` : `1px solid ${theme.border}`,
                     backgroundColor: isSelected ? theme.accentSoft : theme.surface,
                     boxShadow: isSelected ? theme.shadowMd : theme.shadowSm,
-                    marginBottom: 12,
-                    cursor: "pointer",
-                    transition: "box-shadow 0.2s ease, border-color 0.2s ease",
                   }}
                 >
                   <div
@@ -446,7 +393,7 @@ export default function TheraSyncApp() {
                   >
                     {initials(t.name)}
                   </div>
-                  <div>
+                  <div style={{ minWidth: 0 }}>
                     <div style={{ fontWeight: 600, fontSize: 16, color: theme.textPrimary }}>{t.name}</div>
                     <div style={{ fontSize: 13, color: theme.textSecondary, marginBottom: 8 }}>{t.title}</div>
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -467,35 +414,18 @@ export default function TheraSyncApp() {
                       ))}
                     </div>
                   </div>
-                </div>
+                </button>
               );
             })
           )}
         </section>
 
         <section>
-          <h2
-            style={{
-              fontSize: 13,
-              fontWeight: 600,
-              textTransform: "uppercase",
-              letterSpacing: "0.04em",
-              color: theme.textSecondary,
-              marginBottom: 14,
-            }}
-          >
+          <h2 className="thera-section-title">
             Recurring Schedule
           </h2>
           {selectedTherapist ? (
-            <div
-              style={{
-                border: `1px solid ${theme.border}`,
-                borderRadius: theme.radiusLg,
-                padding: 20,
-                backgroundColor: theme.surface,
-                boxShadow: theme.shadowSm,
-              }}
-            >
+            <div className="thera-schedule-panel">
               <p style={{ fontSize: 14, color: theme.textSecondary, marginTop: 0, marginBottom: 16 }}>
                 Selected therapist: <strong style={{ color: theme.textPrimary }}>{selectedTherapist.name}</strong>
               </p>
@@ -504,6 +434,7 @@ export default function TheraSyncApp() {
                   const isActive = activeSlot === slot;
                   return (
                     <button
+                      className="thera-slot-button"
                       key={slot}
                       onClick={() => setActiveSlot(slot)}
                       style={{
@@ -514,10 +445,8 @@ export default function TheraSyncApp() {
                         backgroundColor: isActive ? theme.accentSoft : theme.surface,
                         color: isActive ? theme.accentText : theme.textPrimary,
                         cursor: "pointer",
-                        fontFamily: theme.fontFamily,
                         fontSize: 14,
                         fontWeight: isActive ? 600 : 400,
-                        transition: "all 0.15s ease",
                       }}
                     >
                       {slot} · recurring, locked for 8 weeks
@@ -527,45 +456,22 @@ export default function TheraSyncApp() {
               </div>
             </div>
           ) : (
-            <div
-              style={{
-                padding: 40,
-                borderRadius: theme.radiusLg,
-                border: `1px solid ${theme.border}`,
-                backgroundColor: theme.surfaceMuted,
-                textAlign: "center",
-                color: theme.textSecondary,
-                fontSize: 14,
-              }}
-            >
-              Select a therapist on the left to view their recurring schedule
+            <div className="thera-empty-panel">
+              <div>
+                <div className="thera-empty-mark">8w</div>
+                Select a therapist to view their recurring schedule
+              </div>
             </div>
           )}
         </section>
       </div>
 
       {crisisDetected && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            backgroundColor: "rgba(0,0,0,0.4)",
-            backdropFilter: "blur(12px)",
-            WebkitBackdropFilter: "blur(12px)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 100,
-          }}
-        >
+        <div className="thera-modal-overlay">
           <div
+            className="thera-modal-card"
             style={{
-              backgroundColor: theme.surface,
-              borderRadius: theme.radiusLg,
-              padding: 32,
               maxWidth: 480,
-              width: "90%",
-              boxShadow: theme.shadowLg,
               fontFamily: theme.fontFamily,
             }}
           >
@@ -610,6 +516,7 @@ export default function TheraSyncApp() {
               ))}
             </div>
             <button
+              className="thera-modal-button"
               onClick={() => setCrisisDetected(false)}
               style={{
                 width: "100%",
@@ -617,9 +524,7 @@ export default function TheraSyncApp() {
                 backgroundColor: theme.textPrimary,
                 color: "#fff",
                 border: "none",
-                borderRadius: theme.radiusMd,
                 cursor: "pointer",
-                fontFamily: theme.fontFamily,
                 fontSize: 15,
                 fontWeight: 600,
               }}
@@ -631,27 +536,11 @@ export default function TheraSyncApp() {
       )}
 
       {pendingApproval && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            backgroundColor: "rgba(0,0,0,0.4)",
-            backdropFilter: "blur(12px)",
-            WebkitBackdropFilter: "blur(12px)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 100,
-          }}
-        >
+        <div className="thera-modal-overlay">
           <div
+            className="thera-modal-card"
             style={{
-              backgroundColor: theme.surface,
-              borderRadius: theme.radiusLg,
-              padding: 32,
               maxWidth: 460,
-              width: "90%",
-              boxShadow: theme.shadowLg,
               fontFamily: theme.fontFamily,
             }}
           >
@@ -699,8 +588,9 @@ export default function TheraSyncApp() {
               system to lock this recurring slot.
             </p>
 
-            <div style={{ display: "flex", gap: 12 }}>
+            <div className="thera-modal-actions">
               <button
+                className="thera-modal-button"
                 onClick={() => approvalResolverRef.current?.(false)}
                 style={{
                   flex: 1,
@@ -708,9 +598,7 @@ export default function TheraSyncApp() {
                   backgroundColor: theme.surfaceMuted,
                   color: theme.textPrimary,
                   border: `1px solid ${theme.border}`,
-                  borderRadius: theme.radiusMd,
                   cursor: "pointer",
-                  fontFamily: theme.fontFamily,
                   fontSize: 15,
                   fontWeight: 500,
                 }}
@@ -718,6 +606,7 @@ export default function TheraSyncApp() {
                 Decline
               </button>
               <button
+                className="thera-modal-button"
                 onClick={() => approvalResolverRef.current?.(true)}
                 style={{
                   flex: 2,
@@ -725,10 +614,8 @@ export default function TheraSyncApp() {
                   backgroundColor: theme.accent,
                   color: "#ffffff",
                   border: "none",
-                  borderRadius: theme.radiusMd,
                   fontWeight: 600,
                   cursor: "pointer",
-                  fontFamily: theme.fontFamily,
                   fontSize: 15,
                 }}
               >
