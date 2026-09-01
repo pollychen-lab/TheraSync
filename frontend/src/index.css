@@ -71,6 +71,107 @@ button {
   gap: 24px;
 }
 
+.thera-intake-panel {
+  margin-bottom: 28px;
+  padding: 24px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 10px 30px rgba(0, 0, 0, 0.06);
+}
+
+.thera-intake-form {
+  display: grid;
+  gap: 14px;
+}
+
+.thera-intake-summary-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.thera-intake-summary-copy {
+  min-width: 0;
+  color: #6e6e73;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.thera-intake-summary-copy strong {
+  color: #1d1d1f;
+  font-weight: 600;
+}
+
+.thera-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.thera-field-label,
+.thera-inline-label {
+  color: #1d1d1f;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.thera-inline-label {
+  display: block;
+  margin-bottom: 6px;
+  color: #6e6e73;
+  font-weight: 600;
+}
+
+.thera-input,
+.thera-textarea {
+  width: 100%;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 14px;
+  background: #fbfbfd;
+  color: #1d1d1f;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.45;
+  outline: none;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.thera-input {
+  min-width: 0;
+  padding: 11px 14px;
+}
+
+.thera-textarea {
+  min-height: 96px;
+  padding: 12px 14px;
+  resize: vertical;
+}
+
+.thera-summary-textarea {
+  margin-top: 0;
+  min-height: 82px;
+  background: #ffffff;
+  font-size: 13px;
+}
+
+.thera-input:focus,
+.thera-textarea:focus {
+  border-color: #0071e3;
+  background: #ffffff;
+  box-shadow: 0 0 0 4px rgba(0, 113, 227, 0.14);
+}
+
+.thera-input::placeholder,
+.thera-textarea::placeholder {
+  color: #86868b;
+}
+
 .thera-section-title {
   margin: 0 0 14px;
   color: #6e6e73;
@@ -141,7 +242,9 @@ button {
 }
 
 .thera-slot-button,
-.thera-modal-button {
+.thera-modal-button,
+.thera-primary-button,
+.thera-secondary-button {
   border-radius: 14px;
   font-family: inherit;
   transition:
@@ -152,15 +255,49 @@ button {
 }
 
 .thera-slot-button:hover,
-.thera-modal-button:hover {
+.thera-modal-button:hover,
+.thera-primary-button:hover:not(:disabled),
+.thera-secondary-button:hover {
   transform: translateY(-1px);
 }
 
 .thera-slot-button:focus-visible,
 .thera-modal-button:focus-visible,
-.thera-therapist-card:focus-visible {
+.thera-therapist-card:focus-visible,
+.thera-primary-button:focus-visible,
+.thera-secondary-button:focus-visible {
   outline: 3px solid rgba(0, 113, 227, 0.24);
   outline-offset: 2px;
+}
+
+.thera-primary-button,
+.thera-secondary-button {
+  min-height: 44px;
+  padding: 12px 22px;
+  border: 0;
+  cursor: pointer;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.thera-primary-button {
+  justify-self: start;
+  background: #0071e3;
+  color: #ffffff;
+  box-shadow: 0 6px 16px rgba(0, 113, 227, 0.18);
+}
+
+.thera-primary-button:disabled {
+  background: rgba(0, 0, 0, 0.14);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+.thera-secondary-button {
+  flex-shrink: 0;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: #fbfbfd;
+  color: #1d1d1f;
 }
 
 .thera-banner {
@@ -211,6 +348,25 @@ button {
 
   .thera-content-grid {
     grid-template-columns: 1fr;
+  }
+
+  .thera-intake-panel {
+    padding: 20px;
+  }
+
+  .thera-intake-summary-row,
+  .thera-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .thera-intake-summary-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .thera-primary-button,
+  .thera-secondary-button {
+    width: 100%;
   }
 
   .thera-empty-panel {

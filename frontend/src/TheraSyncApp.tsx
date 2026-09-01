@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Therapist, BookingIntent, WebMCPTool } from "./types";
 
 // Client-side crisis screening. This mirrors the backend's screening so the
@@ -64,6 +64,10 @@ function initials(name: string): string {
     .toUpperCase();
 }
 
+function normalizeTriageSignature(value: string): string {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
 export default function TheraSyncApp() {
   const [matchedTherapists, setMatchedTherapists] = useState<Therapist[]>([]);
   const [selectedTherapist, setSelectedTherapist] = useState<Therapist | null>(null);
@@ -73,10 +77,236 @@ export default function TheraSyncApp() {
   const [pendingApproval, setPendingApproval] = useState<BookingIntent | null>(null);
   const [bookedSuccess, setBookedSuccess] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [narrative, setNarrative] = useState<string>("");
+  const [modalityInput, setModalityInput] = useState<string>("");
+  const [focusInput, setFocusInput] = useState<string>("");
+  const [isTriaging, setIsTriaging] = useState<boolean>(false);
+  const [formCollapsed, setFormCollapsed] = useState<boolean>(false);
+  const [isBooking, setIsBooking] = useState<boolean>(false);
+  const [approvalSummaryDraft, setApprovalSummaryDraft] = useState<string>("");
+  const [lastHumanTriageSignature, setLastHumanTriageSignature] = useState<string | null>(null);
 
   // Resolver for the promise the WebMCP tool handler is awaiting while the
   // human approval modal is open.
   const approvalResolverRef = useRef<((approved: boolean) => void) | null>(null);
+  const summaryDraftRef = useRef<string>("");
+
+  const humanTriageSignature = [
+    normalizeTriageSignature(narrative),
+    normalizeTriageSignature(modalityInput),
+    normalizeTriageSignature(focusInput),
+  ].join("|");
+  const hasUntriagedHumanIntake =
+    matchedTherapists.length > 0 && Boolean(narrative.trim()) && humanTriageSignature !== lastHumanTriageSignature;
+
+  const runTriage = useCallback(
+    async (args: { rawNarrative: string; focusAreas?: string[]; preferredModality?: string }) => {
+      setErrorMessage(null);
+      setBookedSuccess(null);
+
+      const normalized = (args.rawNarrative || "").toLowerCase();
+      if (CRISIS_KEYWORDS.some((kw) => normalized.includes(kw))) {
+        setCrisisDetected(true);
+        return {
+          status: "CRISIS_INTERCEPTED",
+          message:
+            "A crisis signal was detected. The safety circuit breaker has been triggered and emergency hotlines are now displayed; normal scheduling has been paused.",
+        };
+      }
+
+      try {
+        const response = await fetch("/api/triage", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            rawNarrative: args.rawNarrative,
+            preferredModality: args.preferredModality,
+            focusAreas: args.focusAreas,
+          }),
+        });
+        const data = await response.json();
+
+        if (data.status === "CRISIS_INTERCEPTED") {
+          setCrisisDetected(true);
+          return { status: "CRISIS_INTERCEPTED", hotlines: data.crisisHotlines };
+        }
+
+        if (data.status !== "SUCCESS") {
+          const message = data.message || "Triage request failed.";
+          setErrorMessage(message);
+          return { status: "ERROR", message };
+        }
+
+        const matches: Therapist[] = data.matches || [];
+        setMatchedTherapists(matches);
+        if (matches.length > 0) {
+          setSelectedTherapist(matches[0]);
+          setActiveSlot(matches[0].slots[0]);
+        }
+
+        return {
+          status: "SUCCESS",
+          matched_count: matches.length,
+          therapists: matches.map((t) => ({ id: t.id, name: t.name, slots: t.slots })),
+        };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Unknown error";
+        setErrorMessage(`Triage request failed: ${message}`);
+        return { status: "ERROR", message };
+      }
+    },
+    []
+  );
+
+  const startBooking = useCallback(
+    async (args: { therapistId: string; selectedSlot: string; intakeSummary?: string }) => {
+      setErrorMessage(null);
+      setBookedSuccess(null);
+
+      const therapist =
+        matchedTherapists.find((t) => t.id === args.therapistId) ||
+        (selectedTherapist?.id === args.therapistId ? selectedTherapist : null);
+
+      if (!therapist) {
+        return { status: "ERROR", error_code: "THERAPIST_NOT_FOUND" };
+      }
+
+      let lockToken: string;
+      try {
+        // Hold the slot before showing the approval modal so it can't be
+        // taken by another request while the human is deciding.
+        const lockResponse = await fetch("/api/book/lock", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ therapistId: therapist.id, slot: args.selectedSlot }),
+        });
+
+        if (!lockResponse.ok) {
+          let lockError: { error?: string; message?: string } = {};
+          try {
+            lockError = await lockResponse.json();
+          } catch {
+            // Response body wasn't JSON; fall back to the generic message below.
+          }
+          const message = lockError.message || "Unable to reserve this slot.";
+          setErrorMessage(message);
+          return { status: lockError.error || "ERROR", message };
+        }
+
+        const lockData = await lockResponse.json();
+        lockToken = lockData.lockToken;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Unknown error";
+        setErrorMessage(`Unable to reserve this slot: ${message}`);
+        return { status: "ERROR", message };
+      }
+
+      const intakeSummary = args.intakeSummary || "Intake summary generated by the agent";
+
+      return new Promise<{ status: string; booking_id?: string; message?: string }>((resolve) => {
+        setPendingApproval({
+          therapistId: therapist.id,
+          therapistName: therapist.name,
+          slot: args.selectedSlot,
+          intakeSummary,
+        });
+        summaryDraftRef.current = intakeSummary;
+        setApprovalSummaryDraft(intakeSummary);
+
+        approvalResolverRef.current = async (approved: boolean) => {
+          setPendingApproval(null);
+
+          if (!approved) {
+            try {
+              await fetch("/api/book/release", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ therapistId: therapist.id, slot: args.selectedSlot, lockToken }),
+              });
+            } catch {
+              // Best-effort: the lock still expires on its own via its TTL.
+            }
+            resolve({ status: "REJECTED_BY_USER", message: "The user declined to approve this booking." });
+            return;
+          }
+
+          try {
+            const commitResponse = await fetch("/api/book/commit", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                therapistId: therapist.id,
+                slot: args.selectedSlot,
+                intakeSummary: summaryDraftRef.current,
+                userConsent: true,
+                lockToken,
+              }),
+            });
+            const data = await commitResponse.json();
+
+            if (data.status !== "SUCCESS") {
+              setErrorMessage(data.message || "Booking could not be confirmed.");
+              resolve({ status: "ERROR", message: data.message });
+              return;
+            }
+
+            setBookedSuccess(
+              `${therapist.name} has been booked for ${args.selectedSlot}. The recurring slot is now locked.`
+            );
+            resolve({ status: "SUCCESS", booking_id: data.booking.bookingId });
+          } catch (err) {
+            const message = err instanceof Error ? err.message : "Unknown error";
+            setErrorMessage(`Booking request failed: ${message}`);
+            resolve({ status: "ERROR", message });
+          }
+        };
+      });
+    },
+    [matchedTherapists, selectedTherapist]
+  );
+
+  const handleFindTherapists = useCallback(async () => {
+    if (!narrative.trim() || isTriaging) return;
+
+    setIsTriaging(true);
+    const focusAreas = focusInput
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+
+    try {
+      const result = await runTriage({
+        rawNarrative: narrative,
+        focusAreas: focusAreas.length > 0 ? focusAreas : undefined,
+        preferredModality: modalityInput.trim() || undefined,
+      });
+      if (result.status === "SUCCESS") {
+        setLastHumanTriageSignature(humanTriageSignature);
+        setFormCollapsed(true);
+      }
+    } finally {
+      setIsTriaging(false);
+    }
+  }, [focusInput, humanTriageSignature, isTriaging, modalityInput, narrative, runTriage]);
+
+  const handleBookSlot = useCallback(async () => {
+    if (!selectedTherapist || !activeSlot || isBooking) return;
+    if (hasUntriagedHumanIntake) {
+      setErrorMessage("Run Find Therapists again before booking with edited intake details.");
+      return;
+    }
+
+    setIsBooking(true);
+    try {
+      await startBooking({
+        therapistId: selectedTherapist.id,
+        selectedSlot: activeSlot,
+        intakeSummary: narrative.trim() || undefined,
+      });
+    } finally {
+      setIsBooking(false);
+    }
+  }, [activeSlot, hasUntriagedHumanIntake, isBooking, narrative, selectedTherapist, startBooking]);
 
   useEffect(() => {
     const registerWebMCPTools = () => {
@@ -99,58 +329,11 @@ export default function TheraSyncApp() {
             required: ["raw_narrative"],
           },
           handler: async (args: { raw_narrative: string; focus_areas?: string[]; preferred_modality?: string }) => {
-            setErrorMessage(null);
-
-            const normalized = (args.raw_narrative || "").toLowerCase();
-            if (CRISIS_KEYWORDS.some((kw) => normalized.includes(kw))) {
-              setCrisisDetected(true);
-              return {
-                status: "CRISIS_INTERCEPTED",
-                message:
-                  "A crisis signal was detected. The safety circuit breaker has been triggered and emergency hotlines are now displayed; normal scheduling has been paused.",
-              };
-            }
-
-            try {
-              const response = await fetch("/api/triage", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  rawNarrative: args.raw_narrative,
-                  preferredModality: args.preferred_modality,
-                  focusAreas: args.focus_areas,
-                }),
-              });
-              const data = await response.json();
-
-              if (data.status === "CRISIS_INTERCEPTED") {
-                setCrisisDetected(true);
-                return { status: "CRISIS_INTERCEPTED", hotlines: data.crisisHotlines };
-              }
-
-              if (data.status !== "SUCCESS") {
-                const message = data.message || "Triage request failed.";
-                setErrorMessage(message);
-                return { status: "ERROR", message };
-              }
-
-              const matches: Therapist[] = data.matches || [];
-              setMatchedTherapists(matches);
-              if (matches.length > 0) {
-                setSelectedTherapist(matches[0]);
-                setActiveSlot(matches[0].slots[0]);
-              }
-
-              return {
-                status: "SUCCESS",
-                matched_count: matches.length,
-                therapists: matches.map((t) => ({ id: t.id, name: t.name, slots: t.slots })),
-              };
-            } catch (err) {
-              const message = err instanceof Error ? err.message : "Unknown error";
-              setErrorMessage(`Triage request failed: ${message}`);
-              return { status: "ERROR", message };
-            }
+            return runTriage({
+              rawNarrative: args.raw_narrative,
+              focusAreas: args.focus_areas,
+              preferredModality: args.preferred_modality,
+            });
           },
         },
         {
@@ -167,94 +350,10 @@ export default function TheraSyncApp() {
             required: ["therapist_id", "selected_slot"],
           },
           handler: async (args: { therapist_id: string; selected_slot: string; intake_summary?: string }) => {
-            setErrorMessage(null);
-
-            const therapist =
-              matchedTherapists.find((t) => t.id === args.therapist_id) ||
-              (selectedTherapist?.id === args.therapist_id ? selectedTherapist : null);
-
-            if (!therapist) {
-              return { status: "ERROR", error_code: "THERAPIST_NOT_FOUND" };
-            }
-
-            // Hold the slot before showing the approval modal so it can't be
-            // taken by another request while the human is deciding.
-            const lockResponse = await fetch("/api/book/lock", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ therapistId: therapist.id, slot: args.selected_slot }),
-            });
-
-            if (!lockResponse.ok) {
-              let lockError: { error?: string; message?: string } = {};
-              try {
-                lockError = await lockResponse.json();
-              } catch {
-                // Response body wasn't JSON; fall back to the generic message below.
-              }
-              const message = lockError.message || "Unable to reserve this slot.";
-              setErrorMessage(message);
-              return { status: lockError.error || "ERROR", message };
-            }
-
-            const { lockToken } = await lockResponse.json();
-            const intakeSummary = args.intake_summary || "Intake summary generated by the agent";
-
-            return new Promise((resolve) => {
-              setPendingApproval({
-                therapistId: therapist.id,
-                therapistName: therapist.name,
-                slot: args.selected_slot,
-                intakeSummary,
-              });
-
-              approvalResolverRef.current = async (approved: boolean) => {
-                setPendingApproval(null);
-
-                if (!approved) {
-                  try {
-                    await fetch("/api/book/release", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ therapistId: therapist.id, slot: args.selected_slot, lockToken }),
-                    });
-                  } catch {
-                    // Best-effort: the lock still expires on its own via its TTL.
-                  }
-                  resolve({ status: "REJECTED_BY_USER", message: "The user declined to approve this booking." });
-                  return;
-                }
-
-                try {
-                  const commitResponse = await fetch("/api/book/commit", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      therapistId: therapist.id,
-                      slot: args.selected_slot,
-                      intakeSummary,
-                      userConsent: true,
-                      lockToken,
-                    }),
-                  });
-                  const data = await commitResponse.json();
-
-                  if (data.status !== "SUCCESS") {
-                    setErrorMessage(data.message || "Booking could not be confirmed.");
-                    resolve({ status: "ERROR", message: data.message });
-                    return;
-                  }
-
-                  setBookedSuccess(
-                    `${therapist.name} has been booked for ${args.selected_slot}. The recurring slot is now locked.`
-                  );
-                  resolve({ status: "SUCCESS", booking_id: data.booking.bookingId });
-                } catch (err) {
-                  const message = err instanceof Error ? err.message : "Unknown error";
-                  setErrorMessage(`Booking request failed: ${message}`);
-                  resolve({ status: "ERROR", message });
-                }
-              };
+            return startBooking({
+              therapistId: args.therapist_id,
+              selectedSlot: args.selected_slot,
+              intakeSummary: args.intake_summary,
             });
           },
         },
@@ -302,7 +401,7 @@ export default function TheraSyncApp() {
     // Re-register whenever the matched therapist list changes, so the
     // booking tool handler always sees the latest matches.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [matchedTherapists, selectedTherapist]);
+  }, [runTriage, startBooking]);
 
   return (
     <div
@@ -346,6 +445,61 @@ export default function TheraSyncApp() {
         </div>
       )}
 
+      <section className="thera-intake-panel">
+        {formCollapsed && matchedTherapists.length > 0 ? (
+          <div className="thera-intake-summary-row">
+            <div className="thera-intake-summary-copy">
+              Showing matches for <strong>{narrative}</strong>
+            </div>
+            <button
+              className="thera-secondary-button"
+              type="button"
+              onClick={() => setFormCollapsed(false)}
+            >
+              Edit Search
+            </button>
+          </div>
+        ) : (
+          <div className="thera-intake-form">
+            <label className="thera-field-label" htmlFor="intake-narrative">
+              What are you looking for help with?
+            </label>
+            <textarea
+              id="intake-narrative"
+              className="thera-textarea"
+              value={narrative}
+              onChange={(event) => setNarrative(event.target.value)}
+              rows={3}
+              placeholder="Describe what you have been struggling with..."
+            />
+
+            <div className="thera-form-grid">
+              <input
+                className="thera-input"
+                value={modalityInput}
+                onChange={(event) => setModalityInput(event.target.value)}
+                placeholder="Preferred modality, e.g. CBT"
+              />
+              <input
+                className="thera-input"
+                value={focusInput}
+                onChange={(event) => setFocusInput(event.target.value)}
+                placeholder="Focus areas, comma-separated"
+              />
+            </div>
+
+            <button
+              className="thera-primary-button"
+              type="button"
+              onClick={handleFindTherapists}
+              disabled={!narrative.trim() || isTriaging}
+            >
+              {isTriaging ? "Finding..." : "Find Therapists"}
+            </button>
+          </div>
+        )}
+      </section>
+
       <div className="thera-content-grid">
         <section>
           <h2 className="thera-section-title">
@@ -355,7 +509,7 @@ export default function TheraSyncApp() {
             <div className="thera-empty-panel">
               <div>
                 <div className="thera-empty-mark">TS</div>
-                Waiting for the agent to run the triage and matching tool...
+                Describe your needs above, or let the agent run triage, to see matched therapists.
               </div>
             </div>
           ) : (
@@ -454,6 +608,20 @@ export default function TheraSyncApp() {
                   );
                 })}
               </div>
+              <button
+                className="thera-primary-button"
+                type="button"
+                onClick={handleBookSlot}
+                disabled={!activeSlot || isBooking || hasUntriagedHumanIntake}
+                style={{ width: "100%", marginTop: 16 }}
+              >
+                {hasUntriagedHumanIntake ? "Run Search First" : isBooking ? "Reserving..." : "Book This Slot"}
+              </button>
+              {hasUntriagedHumanIntake && (
+                <p style={{ color: theme.danger, fontSize: 12, lineHeight: 1.5, margin: "10px 0 0" }}>
+                  Intake details changed. Run Find Therapists again before booking.
+                </p>
+              )}
             </div>
           ) : (
             <div className="thera-empty-panel">
@@ -578,8 +746,20 @@ export default function TheraSyncApp() {
               <div>
                 <span style={{ color: theme.textSecondary }}>Slot to lock</span> · {pendingApproval.slot}
               </div>
-              <div>
-                <span style={{ color: theme.textSecondary }}>Intake summary</span> · {pendingApproval.intakeSummary}
+              <div style={{ marginTop: 6 }}>
+                <label className="thera-inline-label" htmlFor="approval-summary">
+                  Intake summary
+                </label>
+                <textarea
+                  id="approval-summary"
+                  className="thera-textarea thera-summary-textarea"
+                  value={approvalSummaryDraft}
+                  onChange={(event) => {
+                    setApprovalSummaryDraft(event.target.value);
+                    summaryDraftRef.current = event.target.value;
+                  }}
+                  rows={3}
+                />
               </div>
             </div>
 
