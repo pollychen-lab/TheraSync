@@ -1,0 +1,1 @@
+[warmly] TheraSync is agent-native access with real safety boundaries. Run it with Docker Compose, open localhost:3000, and inspect the two WebMCP tools. The directory is fictional; the browser-to-server gates are real.

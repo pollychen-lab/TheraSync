@@ -1,0 +1,26 @@
+{
+  "name": "therasync-demo-video",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "remotion studio",
+    "generate:voiceover": "node scripts/generate-elevenlabs.mjs",
+    "fit:voiceover": "node scripts/fit-voiceover.mjs",
+    "render": "remotion render src/index.tsx TheraSyncDemo out/therasync-demo.mp4",
+    "render:3min": "remotion render src/index.tsx TheraSyncThreeMinute out/therasync-webmcp-challenge.mp4",
+    "render:final": "remotion render src/index.tsx TheraSyncThreeMinute out/therasync-webmcp-challenge.mp4",
+    "still": "remotion still src/index.tsx TheraSyncDemo out/therasync-demo-still.png"
+  },
+  "dependencies": {
+    "@remotion/cli": "latest",
+    "@remotion/transitions": "latest",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "remotion": "latest"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "typescript": "^5.6.3"
+  }
+}
