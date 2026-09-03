@@ -7,8 +7,12 @@
 //   GET  /api/health       - readiness probe
 
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import express from 'express';
 import cors from 'cors';
+import compression from 'compression';
 import { pool } from './db.js';
 
 const app = express();
@@ -18,6 +22,11 @@ const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:3000')
   .split(',')
   .map((origin) => origin.trim())
   .filter(Boolean);
+
+// Compress every response. Under Docker Compose this was Nginx's job; in the
+// deployed single-service image Express serves the React bundle itself, and
+// without this the client downloads it uncompressed.
+app.use(compression());
 
 app.use(cors({ origin: allowedOrigins }));
 app.use(express.json());
@@ -204,6 +213,45 @@ app.post('/api/book/commit', async (req, res) => {
     res.status(500).json({ status: 'ERROR', message: err.message });
   }
 });
+
+// Unknown API paths must answer with JSON. Without this the SPA fallback below
+// would hand back an HTML document, and a fetch() expecting JSON would fail on
+// a confusing parse error rather than a clear 404.
+app.use('/api', (_req, res) => {
+  res.status(404).json({ error: 'NOT_FOUND' });
+});
+
+// In the deployed single-service image the built React bundle is served by this
+// same process, which keeps the SPA and the API on one origin: the frontend
+// calls /api/* on relative paths, so no CORS negotiation and no proxy hop is
+// involved. Under local Docker Compose the bundle is served by Nginx instead
+// and this directory is absent, so the block is skipped.
+const clientBuildPath =
+  process.env.CLIENT_BUILD_PATH ||
+  path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
+
+if (fs.existsSync(clientBuildPath)) {
+  app.use(
+    express.static(clientBuildPath, {
+      setHeaders: (res, filePath) => {
+        // Filenames under /static carry a content hash and change whenever the
+        // bundle changes, so they can be cached indefinitely. index.html must
+        // not be, or a returning client would keep loading a stale bundle.
+        if (filePath.includes(`${path.sep}static${path.sep}`)) {
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        } else {
+          res.setHeader('Cache-Control', 'no-cache');
+        }
+      },
+    })
+  );
+
+  app.get('*', (_req, res) => {
+    res.setHeader('Cache-Control', 'no-cache');
+    res.sendFile(path.join(clientBuildPath, 'index.html'));
+  });
+  console.log(`Serving client build from ${clientBuildPath}`);
+}
 
 app.listen(PORT, () => {
   console.log(`TheraSync backend API is running on http://localhost:${PORT}`);
