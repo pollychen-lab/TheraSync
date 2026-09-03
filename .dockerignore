@@ -1,0 +1,15 @@
+# The Remotion demo video is ~625MB and is never needed at runtime; without
+# this entry every image build would upload it to Cloud Build.
+video/
+
+docs/
+.git/
+.gitignore
+
+**/node_modules
+frontend/build/
+
+.env
+.env.local
+*.md
+LICENSE

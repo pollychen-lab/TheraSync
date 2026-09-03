@@ -119,6 +119,88 @@ docker compose up -d --build
 docker compose down -v
 ```
 
+## Deploying to Cloud Run
+
+The deployed form of TheraSync is a **single** Cloud Run service: the React
+bundle and the Express API run in one container (`Dockerfile` at the repo
+root), so the SPA and the `/api/*` calls it makes on relative paths share an
+origin. That removes the CORS negotiation and the second hop that a split
+frontend/backend deployment would need, and it means no frontend code has to
+change between Compose and Cloud Run. Nginx is used only by the local Compose
+stack.
+
+Postgres is a managed instance rather than a container, with `DATABASE_URL`
+held in Secret Manager and injected as a secret environment variable.
+
+### One-time database setup
+
+Create a Postgres database with any managed provider, then apply the schema:
+
+```bash
+psql "$DATABASE_URL" -f init-db/01-init.sql
+```
+
+Use the provider's **connection pooler** host if it offers one. Direct
+connections are often IPv6-only, which Cloud Run cannot reach.
+
+Do not put an `sslmode` parameter in `DATABASE_URL`. `pg` applies the parsed
+connection string on top of the explicit `ssl` config in `backend/db.js`, so an
+`sslmode` in the URL silently discards the pinned CA and TLS verification then
+fails. TLS is configured in code instead, via `DATABASE_CA_CERT`.
+
+### Deploy
+
+```bash
+DATABASE_URL='postgresql://user:pass@host:6543/postgres' \
+BILLING_ACCOUNT=XXXXXX-XXXXXX-XXXXXX \
+  deploy/deploy.sh
+```
+
+`deploy/deploy.sh` is idempotent, so later deploys are just:
+
+```bash
+deploy/deploy.sh
+```
+
+It creates the project, links billing, enables the APIs, stores the secret,
+creates a runtime service account whose only permission is reading that secret,
+and deploys.
+
+### Validating a deployment
+
+`e2e/` holds two suites that exercise a running instance: the REST API
+directly, and the React app plus the WebMCP tool layer in a real browser.
+
+```bash
+cd e2e && npm install && npx playwright install chromium
+BASE_URL=https://your-service-url npm test
+```
+
+They create real bookings, all tagged `E2E-MARKER`; see `e2e/README.md` for the
+cleanup query.
+
+### Why the service is capped at one instance
+
+`--max-instances=1` is load-bearing, not a cost control. `/api/book/lock` holds
+slot reservations in process memory (`activeLocks` in `server.js`), so a second
+instance would not see a lock taken by the first, and the follow-up
+`/api/book/commit` would be rejected with `LOCK_REQUIRED`.
+
+The cap makes the flow correct under concurrent users but does not make the
+locks durable: the service still scales to zero, so a reservation is lost if the
+instance is reclaimed between locking and committing. Moving the locks into a
+Postgres table with an expiry column is the fix that would allow more than one
+instance.
+
+### Data API hardening
+
+`init-db/01-init.sql` enables row level security on both tables with no
+policies. Managed providers such as Supabase expose the `public` schema through
+an auto-generated REST API authenticated by a publicly-distributed anon key,
+and `bookings.intake_summary` holds sensitive intake text. RLS denies that path
+entirely, while the backend is unaffected because it connects as a role holding
+`BYPASSRLS`. On a local Postgres the statements are inert.
+
 ## Demo script (crisis screening, matching, and human approval)
 
 1. **Crisis circuit breaker.** Prompt: "I don't feel like there's any

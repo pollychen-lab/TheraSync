@@ -50,3 +50,25 @@ VALUES
     ARRAY['Wednesday 19:30', 'Friday 16:00']
 )
 ON CONFLICT (id) DO NOTHING;
+
+-- Data API hardening.
+--
+-- On a managed host such as Supabase the `public` schema is reachable through
+-- an auto-generated REST API using a publicly-distributed anon key, and
+-- bookings.intake_summary holds sensitive mental-health intake text. Enabling
+-- row level security with no policies denies every Data API read and write,
+-- while the backend is unaffected because it connects as `postgres`, which
+-- holds BYPASSRLS. On a plain local Postgres this is simply inert.
+ALTER TABLE therapists ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bookings ENABLE ROW LEVEL SECURITY;
+
+-- Defense in depth: drop the table grants a managed host hands its API roles.
+-- Guarded so the same script still runs against a local Postgres, where these
+-- roles do not exist.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+        EXECUTE 'REVOKE ALL ON TABLE therapists, bookings FROM anon, authenticated';
+    END IF;
+END
+$$;
