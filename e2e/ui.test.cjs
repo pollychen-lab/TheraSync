@@ -101,6 +101,20 @@ const api = (p, body) => fetch(BASE + p, {
         captured.length === 2 && captured.every((t) => t.hasInputSchema && t.hasExecute), JSON.stringify(captured));
       check(`modelContext.${label} does not leak the internal shape`,
         captured.length === 2 && captured.every((t) => !t.leakedSnakeCase));
+
+      // The tool handlers are rebuilt whenever the match list changes. The host
+      // must not end up holding a second copy of every tool each time that
+      // happens, and the copy it already holds must still reach live state.
+      await page.evaluate(() => window.__WEBMCP_TOOLS__[0].handler({ raw_narrative: 'work anxiety' }));
+      await page.waitForSelector('.thera-therapist-card');
+      await page.evaluate(() => window.__WEBMCP_TOOLS__[0].handler({ raw_narrative: 'relationship strain' }));
+      await page.waitForTimeout(500);
+      const afterRerender = await page.evaluate(() => (window.__captured || []).length);
+      check(`modelContext.${label} does not re-register on state change`, afterRerender === 2, `held ${afterRerender} tools`);
+      const viaHost = await page.evaluate(() =>
+        window.__captured[0].execute({ raw_narrative: 'work anxiety', preferred_modality: 'CBT' }));
+      check(`modelContext.${label} descriptor still executes against live state`,
+        viaHost && viaHost.status === 'SUCCESS' && viaHost.matched_count === 1, JSON.stringify(viaHost).slice(0, 80));
       await ctx.close();
     }
 

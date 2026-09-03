@@ -91,6 +91,12 @@ export default function TheraSyncApp() {
   const approvalResolverRef = useRef<((approved: boolean) => void) | null>(null);
   const summaryDraftRef = useRef<string>("");
 
+  // The tool handlers are rebuilt whenever the matched therapist list changes.
+  // The browser API is told about the tools only once, so these refs let the
+  // descriptors it holds keep calling through to the current handlers.
+  const latestToolsRef = useRef<WebMCPTool[]>([]);
+  const hostRegistrationDoneRef = useRef<boolean>(false);
+
   const humanTriageSignature = [
     normalizeTriageSignature(narrative),
     normalizeTriageSignature(modalityInput),
@@ -361,8 +367,10 @@ export default function TheraSyncApp() {
 
       if (typeof window !== "undefined") {
         // Fallback registry: consumed by this demo's own UI and by any host
-        // that reads this conventional global directly.
+        // that reads this conventional global directly. Reassigning is safe to
+        // repeat, so this always reflects the current handlers.
         (window as any).__WEBMCP_TOOLS__ = tools;
+        latestToolsRef.current = tools;
 
         // Progressive enhancement: the WebMCP browser API is still an
         // evolving proposal, and different hosts/origin trials have exposed
@@ -372,21 +380,35 @@ export default function TheraSyncApp() {
         // (`inputSchema` + `execute`), not this app's internal tool shape
         // (`input_schema` + `handler`), so normalize once and reuse the
         // result for whichever entry point the host actually implements.
+        // Registering with the browser API is *not* idempotent the way the
+        // global above is: an additive entry point such as registerTool would
+        // leave the host holding a second copy of every tool each time this
+        // effect re-ran. Register once, and route execution through the ref so
+        // the host still reaches the latest handler.
         const modelContext = (window.navigator as any).modelContext;
-        if (modelContext) {
-          const registeredTools = tools.map(({ name, description, input_schema, handler }) => ({
+        if (modelContext && !hostRegistrationDoneRef.current) {
+          const registeredTools = tools.map(({ name, description, input_schema }) => ({
             name,
             description,
             inputSchema: input_schema,
-            execute: handler,
+            execute: (args: any) => {
+              const current = latestToolsRef.current.find((tool) => tool.name === name);
+              if (!current) {
+                return Promise.resolve({ status: "ERROR", message: `Tool ${name} is no longer registered.` });
+              }
+              return current.handler(args);
+            },
           }));
 
           if (typeof modelContext.registerTools === "function") {
             modelContext.registerTools(registeredTools);
+            hostRegistrationDoneRef.current = true;
           } else if (typeof modelContext.provideContext === "function") {
             modelContext.provideContext({ tools: registeredTools });
+            hostRegistrationDoneRef.current = true;
           } else if (typeof modelContext.registerTool === "function") {
             registeredTools.forEach((tool) => modelContext.registerTool(tool));
+            hostRegistrationDoneRef.current = true;
           }
         }
 
