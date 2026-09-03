@@ -6,6 +6,17 @@ service (persistence, slot locking, consent auditing), so an AI agent can
 safely drive a scheduling workflow end to end while a human stays in the
 loop for anything sensitive.
 
+## Live demo
+
+| | |
+|---|---|
+| **App** | https://therasync-976778372804.us-east4.run.app |
+| **Demo video (3 min)** | https://youtu.be/dx2zhjiDGN0 |
+
+The page exposes its tools both on `window.__WEBMCP_TOOLS__` and through
+`navigator.modelContext`, so it works in a WebMCP-enabled browser and can also
+be driven straight from the DevTools console — see below.
+
 ## Stack
 
 - **Frontend:** React + TypeScript, built with Create React App and served
@@ -112,6 +123,39 @@ docker compose up -d --build
 3. Watch the therapist cards filter live, the recurring schedule panel
    highlight matching slots, and the human-in-the-loop approval modal
    appear when a booking is committed.
+
+### 3b. Drive the tools from the DevTools console
+
+A WebMCP host is not required to exercise the tool layer. Open the console and
+run:
+
+```js
+window.__WEBMCP_TOOLS__.map((t) => t.name);
+// ['triage_and_match_therapists', 'commit_intake_booking']
+
+await window.__WEBMCP_TOOLS__[0].handler({
+  raw_narrative: "work stress and trouble sleeping",
+  preferred_modality: "CBT",
+});
+```
+
+Triage has to run before a booking: `commit_intake_booking` resolves the
+therapist from the current match list, and returns `THERAPIST_NOT_FOUND` if
+nothing has been matched yet.
+
+```js
+await window.__WEBMCP_TOOLS__[1].handler({
+  therapist_id: "th_01",
+  selected_slot: "Thursday 18:00",
+  intake_summary: "Work-related anxiety, seeking CBT",
+});
+```
+
+The call suspends — the console will sit there unresolved — until a human
+clicks Approve or Decline in the modal that opens. Approving resolves
+`{status: 'SUCCESS', booking_id: 'BK_...'}`; declining resolves
+`{status: 'REJECTED_BY_USER'}` and releases the held slot. Nothing reaches the
+database until a human approves.
 
 ### 4. Stop and clean up
 
